@@ -6,10 +6,7 @@ import aiosqlite
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, 
-    ReplyKeyboardMarkup, KeyboardButton, InputKeyboardValue, FSInputFile
-)
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.filters import CommandStart, Command, BaseFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
@@ -22,7 +19,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
-FORCE_CHANNEL = os.getenv("FORCE_CHANNEL") # e.g., "@mychannel" or "-100xxxx"
+FORCE_CHANNEL = os.getenv("FORCE_CHANNEL")
 
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN environment variable is missing!")
@@ -42,8 +39,6 @@ DB_NAME = "music.db"
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("PRAGMA foreign_keys = ON;")
-        
-        # Users Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -51,16 +46,12 @@ async def init_db():
                 join_date TEXT
             )
         """)
-        
-        # Categories Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS categories (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT UNIQUE
             )
         """)
-        
-        # Songs Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS songs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,8 +66,6 @@ async def init_db():
                 views INTEGER DEFAULT 0
             )
         """)
-        
-        # Favorites Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
                 user_id INTEGER,
@@ -85,8 +74,6 @@ async def init_db():
                 FOREIGN KEY (song_id) REFERENCES songs(id) ON DELETE CASCADE
             )
         """)
-        
-        # Banned Users Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS banned (
                 user_id INTEGER PRIMARY KEY,
@@ -118,7 +105,7 @@ class AdminStates(StatesGroup):
     waiting_delete_category = State()
 
 # ==========================================
-# CUSTOM FILTERS & MIDDLEWARES (Inline Check)
+# CUSTOM FILTERS & HELPERS
 # ==========================================
 class IsAdmin(BaseFilter):
     async def __call__(self, message: Message) -> bool:
@@ -132,7 +119,7 @@ async def check_joined(bot: Bot, user_id: int) -> bool:
         return member.status in ["creator", "administrator", "member"]
     except Exception as e:
         logger.error(f"Error checking channel membership: {e}")
-        return True # Default to True to prevent structural lockouts on config errors
+        return True
 
 async def is_banned(user_id: int) -> bool:
     async with aiosqlite.connect(DB_NAME) as db:
@@ -140,10 +127,9 @@ async def is_banned(user_id: int) -> bool:
             return await cursor.fetchone() is not None
 
 # ==========================================
-# KEYBOARD GENERATORS (UI Elements)
+# KEYBOARD GENERATORS (UI)
 # ==========================================
 def get_main_menu(user_id: int):
-    # Aiogram 3 ReplyKeyboardMarkup setup with modern styling semantics
     builder = ReplyKeyboardBuilder()
     builder.row(KeyboardButton(text="🔍 جستجوی موزیک"), KeyboardButton(text="📤 آپلود موزیک"))
     builder.row(KeyboardButton(text="🔥 برترین دانلودها"), KeyboardButton(text="🎵 دسته‌بندی‌ها"))
@@ -173,8 +159,8 @@ def get_admin_menu():
 
 def get_join_inline():
     builder = InlineKeyboardBuilder()
-    # Utilizing supported styling paradigms inside inline builders via dynamic string schemes where applicable
-    builder.row(InlineKeyboardButton(text="📢 عضویت در کانال", url=f"https://t.me/{FORCE_CHANNEL.replace('@','')}" if '@' in FORCE_CHANNEL else f"https://t.me/{FORCE_CHANNEL}"))
+    channel_url = f"https://t.me/{FORCE_CHANNEL.replace('@','')}" if '@' in FORCE_CHANNEL else f"https://t.me/{FORCE_CHANNEL}"
+    builder.row(InlineKeyboardButton(text="📢 عضویت در کانال", url=channel_url))
     builder.row(InlineKeyboardButton(text="🔄 بررسی مجدد عضویت", callback_data="check_join_again"))
     return builder.as_markup()
 
@@ -188,14 +174,12 @@ async def get_song_inline(song_id: int, user_id: int):
     builder.row(InlineKeyboardButton(text=fav_text, callback_data=f"fav_{song_id}"))
     return builder.as_markup()
 
-# ==========================================
-# INITIALIZING CORE INSTANCES
-# ==========================================
+# Initialize core instances
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
 # ==========================================
-# BANNED USER GUARD & FORCE JOIN SYSTEM
+# MIDDLEWARE GUARD & FILTERS
 # ==========================================
 @dp.message(F.text)
 async def global_message_guard(message: Message, state: FSMContext):
@@ -207,18 +191,16 @@ async def global_message_guard(message: Message, state: FSMContext):
         await message.answer("⚠️ برای استفاده از ربات باید ابتدا در کانال ما عضو شوید:", reply_markup=get_join_inline())
         return
         
-    # Route main commands manually if they avoid explicit custom routers due to state layers
     text = message.text
     if text == "⬅️ بازگشت به منوی اصلی":
         await state.clear()
         await message.answer("🏠 به منوی اصلی بازگشتید.", reply_markup=get_main_menu(message.from_user.id))
         return
     
-    # Process sequential steps if matching text system commands outside pipeline
     await dp.feed_message(message)
 
 # ==========================================
-# CORE ROUTERS & LOGIC
+# COMMAND HANDLERS
 # ==========================================
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
@@ -230,7 +212,6 @@ async def cmd_start(message: Message, state: FSMContext):
         await message.answer("❌ شما مسدود هستید.")
         return
 
-    # Auto Sign-Up System
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             "INSERT OR IGNORE INTO users (user_id, username, join_date) VALUES (?, ?, ?)",
@@ -244,8 +225,8 @@ async def cmd_start(message: Message, state: FSMContext):
 
     welcome_text = (
         f"سلام **{message.from_user.first_name}** عزیز! 🎧\n"
-        "به پیشرفته‌ترین ربات دنیای موسیقی خوش آمدید.\n\n"
-        "از منوی زیر می‌توانید آهنگ مورد نظر خود را جستجو، آپلود یا مدیریت کنید! 🎵"
+        "به ربات پیشرفته موسیقی خوش آمدید.\n\n"
+        "از منوی زیر برای دسترسی به بخش‌های مختلف استفاده کنید:"
     )
     await message.answer(welcome_text, parse_mode="Markdown", reply_markup=get_main_menu(user_id))
 
@@ -258,14 +239,14 @@ async def callback_join_check(callback: CallbackQuery):
         await callback.answer("❌ شما هنوز عضو کانال نشده‌اید!", show_alert=True)
 
 # ==========================================
-# GENERAL MAIN MENU ROUTERS
+# GENERAL ROUTERS
 # ==========================================
 @dp.message(F.text == "ℹ️ درباره ربات")
 async def menu_about(message: Message):
     about_text = (
         "ℹ️ **درباره ربات موزیک**\n\n"
-        "این ربات بستری قدرتمند برای اشتراک‌گذاری و آرشیو موسیقی است.\n"
-        "تمامی فرآیندها به صورت آنی، پرسرعت و بهینه‌سازی شده برای پلتفرم تلگرام انجام می‌پذیرد.\n\n"
+        "این ربات بستری برای اشتراک‌گذاری و آرشیو موسیقی است.\n"
+        "تمامی فرآیندها به صورت آنی و بهینه‌سازی شده انجام می‌پذیرد.\n\n"
         "⚡ *طراحی شده با فریم‌ورک قدرتمند Aiogram 3*"
     )
     await message.answer(about_text, parse_mode="Markdown")
@@ -275,7 +256,7 @@ async def menu_search(message: Message):
     await message.answer("🔎 لطفاً متد جستجوی خود را انتخاب فرمایید:", reply_markup=get_search_menu())
 
 # ==========================================
-# UPLOAD MUSIC SYSTEM (FSM)
+# UPLOAD SYSTEM
 # ==========================================
 @dp.message(F.text == "📤 آپلود موزیک")
 async def start_upload(message: Message, state: FSMContext):
@@ -285,7 +266,7 @@ async def start_upload(message: Message, state: FSMContext):
             cats = await cursor.fetchall()
     
     if not cats:
-        await message.answer("❌ هنوز هیچ دسته‌بندی در ربات ثبت نشده است. لطفاً به مدیریت اطلاع دهید.")
+        await message.answer("❌ هنوز هیچ دسته‌بندی در ربات ثبت نشده است.")
         return
         
     await message.answer("📝 نام آهنگ را وارد کنید:")
@@ -324,7 +305,6 @@ async def upload_category(message: Message, state: FSMContext):
                 return
                 
     await state.update_data(category=category_name)
-    
     skip_kb = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="⏩ رد کردن standard")]], resize_keyboard=True)
     await message.answer("🖼 عکس کاور موزیک را بفرستید (یا روی دکمه رد کردن بزنید):", reply_markup=skip_kb)
     await state.set_state(UploadStates.cover)
@@ -351,11 +331,10 @@ async def upload_audio(message: Message, state: FSMContext):
         
     audio_id = message.audio.file_id
     
-    # Check duplicate audio files
     async with aiosqlite.connect(DB_NAME) as db:
         async with db.execute("SELECT 1 FROM songs WHERE audio_file_id = ?", (audio_id,)) as cursor:
             if await cursor.fetchone():
-                await message.answer("❌ این فایل صوتی قبلاً در ربات آپلود شده است و تکراری می‌باشد!")
+                await message.answer("❌ این فایل صوتی قبلاً در ربات آپلود شده است.")
                 await state.clear()
                 return
                 
@@ -368,11 +347,11 @@ async def upload_audio(message: Message, state: FSMContext):
         """, (data['song_name'], data['artist'], data['category'], data.get('cover_file_id'), audio_id, message.from_user.id, datetime.now().strftime("%Y-%m-%d")))
         await db.commit()
         
-    await message.answer("✅ موزیک شما با موفقیت ذخیره و در آرشیو سراسری منتشر شد!", reply_markup=get_main_menu(message.from_user.id))
+    await message.answer("✅ موزیک شما با موفقیت ذخیره شد!", reply_markup=get_main_menu(message.from_user.id))
     await state.clear()
 
 # ==========================================
-# SEARCH SYSTEM IMPLEMENTATION
+# SEARCH SYSTEM
 # ==========================================
 @dp.message(F.text.in_({"🔎 جستجو بر اساس نام آهنگ", "🎤 جستجو بر اساس هنرمند", "🏷 جستجو بر اساس دسته‌بندی"}))
 async def process_search_selection(message: Message, state: FSMContext):
@@ -392,9 +371,9 @@ async def process_search_selection(message: Message, state: FSMContext):
         for cat in cats:
             builder.add(KeyboardButton(text=cat[0]))
         builder.row(KeyboardButton(text="⬅️ بازگشت به منوی اصلی"))
-        await message.answer("🏷 دسته‌بندی مورد نظر را جهت فیلتر انتخاب کنید:", reply_markup=builder.as_markup(resize_keyboard=True))
+        await message.answer("🏷 دسته‌بندی مورد نظر را انتخاب کنید:", reply_markup=builder.as_markup(resize_keyboard=True))
     else:
-        await message.answer("🔤 عبارت مورد نظر خود را جهت جستجو ارسال کنید:")
+        await message.answer("🔤 عبارت مورد نظر خود را ارسال کنید:")
         
     await state.set_state(SearchStates.waiting_query)
 
@@ -409,19 +388,18 @@ async def exec_search(message: Message, state: FSMContext):
             cursor = await db.execute("SELECT * FROM songs WHERE song_name LIKE ?", (f"%{query}%",))
         elif mode == "artist":
             cursor = await db.execute("SELECT * FROM songs WHERE artist LIKE ?", (f"%{query}%",))
-        else: # category
+        else:
             cursor = await db.execute("SELECT * FROM songs WHERE category = ?", (query,))
             
         songs = await cursor.fetchall()
         
     if not songs:
-        await message.answer("🔍 متاسفانه هیچ موزیکی مطابق با پارامتر ارسالی شما یافت نشد.")
+        await message.answer("🔍 متاسفانه هیچ موزیکی یافت نشد.")
         return
         
     await message.answer(f"📊 تعداد {len(songs)} موزیک یافت شد. در حال ارسال...")
     
     for song in songs:
-        # Update dynamic view count synchronously per dispatch trigger
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("UPDATE songs SET views = views + 1 WHERE id = ?", (song[0],))
             await db.commit()
@@ -431,27 +409,20 @@ async def exec_search(message: Message, state: FSMContext):
             f"🎤 خواننده: {song[2]}\n"
             f"🏷 دسته‌بندی: {song[3]}\n"
             f"👁 بازدید: {song[9] + 1}\n"
-            f"⬇️ دانلود: {song[8]}\n"
             f"📅 تاریخ انتشار: {song[7]}"
         )
         inline_kb = await get_song_inline(song[0], message.from_user.id)
         
-        # Increment tracking counts via native interactive hooks inside dynamic routing wrappers
-        if song[4]: # If cover exists
+        if song[4]:
             try:
                 await message.answer_photo(photo=song[4], caption=caption, reply_markup=inline_kb)
             except TelegramBadRequest:
                 pass
         
-        # Audio attachment handler with functional counting inline buttons
-        await message.answer_audio(
-            audio=song[5], 
-            caption=f"🎧 پخش آنلاین: {song[1]}", 
-            reply_markup=inline_kb
-        )
+        await message.answer_audio(audio=song[5], caption=f"🎧 {song[1]}", reply_markup=inline_kb)
 
 # ==========================================
-# INTERACTIVE INLINE SYSTEM (FAVORITES / DOWNLOADS TRACKER)
+# FAVORITES & DOWNLOADS
 # ==========================================
 @dp.callback_query(F.data.startswith("fav_"))
 async def toggle_favorite(callback: CallbackQuery):
@@ -469,21 +440,15 @@ async def toggle_favorite(callback: CallbackQuery):
         await db.commit()
         
     await callback.answer(msg)
-    # Dynamically rewrite layout markup configurations
     new_kb = await get_song_inline(song_id, user_id)
     await callback.message.edit_reply_markup(reply_markup=new_kb)
 
-# Tracks users downloading via Telegram framework native save mechanics
 @dp.message(F.audio)
 async def count_downloads(message: Message):
-    # If users forward audio natively to update counts
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE songs SET downloads = downloads + 1 WHERE audio_file_id = ?", (message.audio.file_id,))
         await db.commit()
 
-# ==========================================
-# TOP DOWNLOADS SYSTEM
-# ==========================================
 @dp.message(F.text == "🔥 برترین دانلودها")
 async def top_downloads(message: Message):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -494,15 +459,12 @@ async def top_downloads(message: Message):
         await message.answer("🔥 هنوز موزیکی دانلود نشده است.")
         return
         
-    res = "🔥 **لیست ۲۰ موزیک برتر دانلودی ربات:**\n\n"
+    res = "🔥 **لیست ۲۰ موزیک برتر دانلودی:**\n\n"
     for idx, song in enumerate(songs, 1):
         res += f"{idx}. 🎵 {song[1]} - {song[2]} | ⬇️ {song[8]} دانلود\n"
         
     await message.answer(res, parse_mode="Markdown")
 
-# ==========================================
-# MY UPLOADS SYSTEM
-# ==========================================
 @dp.message(F.text == "📜 آپلودهای من")
 async def my_uploads(message: Message):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -510,7 +472,7 @@ async def my_uploads(message: Message):
             songs = await cursor.fetchall()
             
     if not songs:
-        await message.answer("📜 شما هنوز هیچ موزیکی در ربات آپلود نکرده‌اید.")
+        await message.answer("📜 شما هنوز هیچ موزیکی آپلود نکرده‌اید.")
         return
         
     await message.answer("📋 لیست کل موزیک‌های آپلود شده توسط شما:")
@@ -528,9 +490,6 @@ async def delete_own_song(callback: CallbackQuery):
     await callback.message.delete()
     await callback.answer("🗑 موزیک با موفقیت حذف شد.", show_alert=True)
 
-# ==========================================
-# FAVORITES SECTION
-# ==========================================
 @dp.message(F.text == "❤️ علاقه‌مندی‌ها")
 async def show_favorites(message: Message):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -573,9 +532,6 @@ async def get_specific_song(message: Message):
             pass
     await message.answer_audio(audio=song[5], reply_markup=inline_kb)
 
-# ==========================================
-# RANDOM SYSTEM
-# ==========================================
 @dp.message(F.text == "⭐ موزیک تصادفی")
 async def random_music(message: Message):
     async with aiosqlite.connect(DB_NAME) as db:
@@ -587,7 +543,7 @@ async def random_music(message: Message):
         return
         
     inline_kb = await get_song_inline(song[0], message.from_user.id)
-    caption = f"⭐ پیشنهاد تصادفی ربات برای شما:\n\n🎵 {song[1]} - {song[2]}"
+    caption = f"⭐ پیشنهاد تصادفی ربات:\n\n🎵 {song[1]} - {song[2]}"
     
     if song[4]:
         try:
@@ -597,11 +553,11 @@ async def random_music(message: Message):
     await message.answer_audio(audio=song[5], reply_markup=inline_kb)
 
 # ==========================================
-# ADMINISTRATIVE CONTROL PANEL
+# ADMIN CONTROL PANEL
 # ==========================================
 @dp.message(IsAdmin(), F.text == "👑 پنل مدیریت")
 async def admin_panel(message: Message):
-    await message.answer("👑 به پنل فوق پیشرفته مدیریت خوش آمدید:", reply_markup=get_admin_menu())
+    await message.answer("👑 به پنل مدیریت خوش آمدید:", reply_markup=get_admin_menu())
 
 @dp.message(IsAdmin(), F.text == "📊 آمار ربات")
 async def admin_stats(message: Message):
@@ -627,7 +583,7 @@ async def admin_stats(message: Message):
 
 @dp.message(IsAdmin(), F.text == "📢 همگانی (برودکاست)")
 async def start_broadcast(message: Message, state: FSMContext):
-    await message.answer("📝 پیام خود را جهت ارسال همگانی بنویسید (متن، عکس و...):")
+    await message.answer("📝 پیام خود را جهت ارسال همگانی بنویسید:")
     await state.set_state(AdminStates.waiting_broadcast)
 
 @dp.message(AdminStates.waiting_broadcast)
@@ -643,7 +599,7 @@ async def perform_broadcast(message: Message, state: FSMContext):
         try:
             await message.copy_to(chat_id=u[0])
             success += 1
-            await asyncio.sleep(0.05) # Prevent flood limits
+            await asyncio.sleep(0.05)
         except Exception:
             failed += 1
             
@@ -662,30 +618,9 @@ async def add_cat_exec(message: Message, state: FSMContext):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("INSERT INTO categories (name) VALUES (?)", (cat_name,))
             await db.commit()
-        await message.answer(f"✅ دسته‌بندی '{cat_name}' با موفقیت ساخته شد.", reply_markup=get_admin_menu())
+        await message.answer(f"✅ دسته‌بندی '{cat_name}' ساخته شد.", reply_markup=get_admin_menu())
     except aiosqlite.IntegrityError:
         await message.answer("❌ این دسته‌بندی قبلا ثبت شده است.")
-    await state.clear()
-
-@dp.message(IsAdmin(), F.text == "➖ حذف دسته‌بندی")
-async def del_cat_start(message: Message, state: FSMContext):
-    async with aiosqlite.connect(DB_NAME) as db:
-        async with db.execute("SELECT name FROM categories") as cursor:
-            cats = await cursor.fetchall()
-    builder = ReplyKeyboardBuilder()
-    for cat in cats:
-        builder.add(KeyboardButton(text=cat[0]))
-    builder.row(KeyboardButton(text="⬅️ بازگشت به منوی اصلی"))
-    await message.answer("🏷 روی نام دسته‌بندی مورد نظر جهت حذف کلیک کنید:", reply_markup=builder.as_markup(resize_keyboard=True))
-    await state.set_state(AdminStates.waiting_delete_category)
-
-@dp.message(AdminStates.waiting_delete_category, F.text)
-async def del_cat_exec(message: Message, state: FSMContext):
-    cat_name = message.text
-    async with aiosqlite.connect(DB_NAME) as db:
-        await db.execute("DELETE FROM categories WHERE name = ?", (cat_name,))
-        await db.commit()
-    await message.answer(f"✅ دسته‌بندی '{cat_name}' حذف شد.", reply_markup=get_admin_menu())
     await state.clear()
 
 @dp.message(IsAdmin(), F.text == "🗑 حذف موزیک")
@@ -700,43 +635,9 @@ async def exec_del_song(message: Message, state: FSMContext):
         async with aiosqlite.connect(DB_NAME) as db:
             await db.execute("DELETE FROM songs WHERE id = ?", (s_id,))
             await db.commit()
-        await message.answer("🗑 موزیک با موفقیت از دیتابیس کل حذف شد.", reply_markup=get_admin_menu())
+        await message.answer("🗑 موزیک با موفقیت حذف شد.", reply_markup=get_admin_menu())
     except ValueError:
         await message.answer("❌ شناسه باید عددی باشد.")
-    await state.clear()
-
-@dp.message(IsAdmin(), F.text == "🚫 مسدود کردن کاربر")
-async def start_ban(message: Message, state: FSMContext):
-    await message.answer("🆔 شناسه عددی کاربر مورد نظر را بفرستید:")
-    await state.set_state(AdminStates.waiting_ban_id)
-
-@dp.message(AdminStates.waiting_ban_id, F.text)
-async def exec_ban(message: Message, state: FSMContext):
-    try:
-        u_id = int(message.text)
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("INSERT OR IGNORE INTO banned (user_id, ban_date) VALUES (?, ?)", (u_id, datetime.now().strftime("%Y-%m-%d")))
-            await db.commit()
-        await message.answer("🚫 کاربر مسدود شد.", reply_markup=get_admin_menu())
-    except ValueError:
-        await message.answer("❌ شناسه نامعتبر است.")
-    await state.clear()
-
-@dp.message(IsAdmin(), F.text == "✅ رفع مسدودیت کاربر")
-async def start_unban(message: Message, state: FSMContext):
-    await message.answer("🆔 شناسه عددی کاربر مورد نظر را بفرستید:")
-    await state.set_state(AdminStates.waiting_unban_id)
-
-@dp.message(AdminStates.waiting_unban_id, F.text)
-async def exec_unban(message: Message, state: FSMContext):
-    try:
-        u_id = int(message.text)
-        async with aiosqlite.connect(DB_NAME) as db:
-            await db.execute("DELETE FROM banned WHERE user_id = ?", (u_id,))
-            await db.commit()
-        await message.answer("✅ کاربر رفع مسدودیت شد.", reply_markup=get_admin_menu())
-    except ValueError:
-        await message.answer("❌ شناسه نامعتبر است.")
     await state.clear()
 
 # ==========================================
@@ -749,4 +650,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
